@@ -12,6 +12,13 @@ uv sync --extra dev    # creates .venv with Python 3.12 and installs everything
 cp .env.example .env   # add your GOOGLE_API_KEY (Gemini) and TAVILY_API_KEY
 ```
 
+### API keys
+
+- **`GOOGLE_API_KEY`** (Gemini): sign in at [Google AI Studio](https://aistudio.google.com/app/apikey) with a Google account and click **Create API key**. The free tier is enough for test runs; full runs may hit its rate limits.
+- **`TAVILY_API_KEY`** (web search): sign up at [tavily.com](https://app.tavily.com) and copy the key from your dashboard (it starts with `tvly-`). The free plan includes a monthly allowance of searches; a full run uses about 40.
+
+Paste both into `.env`.
+
 Edit `config.yaml` with your keywords, employment types, work arrangements, seniority, focus areas and any terms to exclude.
 
 ## Run
@@ -51,3 +58,9 @@ uv run pytest
 ```
 
 The tests use a fake LLM and canned search results, so they make no API calls.
+
+## Contributing
+
+1. Fork the repository and clone your fork.
+2. Create a branch, add your feature, and make sure `uv run pytest` passes.
+3. Push the branch to your fork and open a pull request against `main`.
