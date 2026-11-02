@@ -80,3 +80,19 @@ Each line: id | company | job title | url | location | posted date | application
    - "open": posted within the last 60 days, or the deadline is today or later
    - "unknown": no posted date or deadline, or it can't be interpreted
 """
+
+RANK = """Score how well this person's resume fits each job posting below.
+
+Resume:
+{resume}
+
+Each line: id | job title | company | seniority | requirements | description
+
+{jobs}
+
+For every id, return:
+- score: 10 = the person's skills, domain and seniority strongly match what the posting asks for; 1 = little overlap.
+- reason: one short sentence naming the concrete overlap or gap (e.g. "strong NGS pipeline experience; no Kubernetes").
+  Write it without names or pronouns.
+Judge only from what the posting states. If it says little, score on the title and description and say so.
+"""

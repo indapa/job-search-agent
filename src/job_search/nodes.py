@@ -9,7 +9,7 @@ from langgraph.types import Send
 from . import prompts
 from .output import write_outputs
 from .state import (
-    Consolidation, ExtractionResult, GraphState, JobPosting, QueryPlan, Reflection, SearchTask,
+    Consolidation, ExtractionResult, GraphState, JobPosting, QueryPlan, Reflection, ResumeRanking, SearchTask,
 )
 
 log = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ SearchFn = Callable[[str, int], list[dict]]
 
 MAX_PAGE_CHARS = 12_000
 LLM_CONCURRENCY = 8
+RANK_BATCH = 20
 
 _STOPWORDS = {"the", "inc", "incorporated", "llc", "ltd", "corp", "corporation", "company", "companie", "co",
               "for", "of", "and"}
@@ -222,6 +223,41 @@ class Nodes:
         merged += [j for i, j in enumerate(labelled) if i not in used]
         log.info("Consolidated %d jobs into %d", len(jobs), len(merged))
         return {"jobs": merged}
+
+    def rank(self, state: GraphState) -> dict:
+        """Score each posting against the person's resume, so the report lists the best fits first."""
+        resume = state["profile"].get("resume_text")
+        jobs = state.get("jobs", [])
+        to_rank = [i for i, j in enumerate(jobs) if j.matches_criteria != "no"]
+        if not resume or not to_rank:
+            return {}
+        chunks = [to_rank[k : k + RANK_BATCH] for k in range(0, len(to_rank), RANK_BATCH)]
+        inputs = [
+            prompts.RANK.format(
+                resume=resume,
+                jobs="\n".join(
+                    f"{n} | {jobs[i].title} | {jobs[i].company} | {jobs[i].seniority or ''} | "
+                    f"{jobs[i].requirements or ''} | {jobs[i].description}"
+                    for n, i in enumerate(chunk)
+                ),
+            )
+            for chunk in chunks
+        ]
+        results = self.llm.with_structured_output(ResumeRanking).batch(
+            inputs, config={"max_concurrency": LLM_CONCURRENCY}, return_exceptions=True
+        )
+
+        ranked = list(jobs)
+        for chunk, result in zip(chunks, results):
+            if isinstance(result, Exception) or result is None:  # those jobs keep their keyword ranking
+                log.warning("Resume ranking failed for %d jobs: %s", len(chunk), result)
+                continue
+            for fit in result.fits:
+                if 0 <= fit.id < len(chunk):
+                    i = chunk[fit.id]
+                    ranked[i] = jobs[i].model_copy(update={"resume_fit": fit.score, "fit_reason": fit.reason})
+        log.info("Ranked %d jobs against the resume", sum(j.resume_fit is not None for j in ranked))
+        return {"jobs": ranked}
 
     def write_report(self, state: GraphState) -> dict:
         paths = write_outputs(state.get("jobs", []), state["profile"], self.output_dir)

@@ -6,7 +6,7 @@ from .state import GraphState
 
 
 def build_graph(llm: BaseChatModel, search: SearchFn, output_dir: str = "output"):
-    """plan_queries -> search (fan-out) -> extract -> dedupe -> verify -> reflect -> (loop | consolidate -> write_report)"""
+    """plan_queries -> search (fan-out) -> extract -> dedupe -> verify -> reflect -> (loop | consolidate -> rank -> write_report)"""
     nodes = Nodes(llm, search, output_dir)
     g = StateGraph(GraphState)
 
@@ -17,6 +17,7 @@ def build_graph(llm: BaseChatModel, search: SearchFn, output_dir: str = "output"
     g.add_node("verify", nodes.verify)
     g.add_node("reflect", nodes.reflect)
     g.add_node("consolidate", nodes.consolidate)
+    g.add_node("rank", nodes.rank)
     g.add_node("write_report", nodes.write_report)
 
     g.add_edge(START, "plan_queries")
@@ -26,7 +27,8 @@ def build_graph(llm: BaseChatModel, search: SearchFn, output_dir: str = "output"
     g.add_edge("dedupe", "verify")
     g.add_edge("verify", "reflect")
     g.add_conditional_edges("reflect", nodes.route_after_reflect, ["plan_queries", "consolidate"])
-    g.add_edge("consolidate", "write_report")
+    g.add_edge("consolidate", "rank")
+    g.add_edge("rank", "write_report")
     g.add_edge("write_report", END)
 
     return g.compile()

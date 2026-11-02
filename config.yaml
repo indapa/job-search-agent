@@ -6,6 +6,7 @@ work_arrangement: ["remote", "hybrid"]         # remote | hybrid | on-site
 focus_areas: ["genomics", "machine learning"]
 seniority: ["senior", "staff"]
 exclude_keywords: []       # postings mentioning these are marked as not a match
+resume_dir: "resume"       # PDF/TXT/MD resumes here are used to rank results by fit; leave empty to skip
 
 # Run size (controls API spend)
 max_iterations: 2        # search -> reflect rounds

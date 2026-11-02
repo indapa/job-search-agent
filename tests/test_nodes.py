@@ -4,8 +4,11 @@ from langchain_core.runnables import RunnableLambda
 
 from job_search.graph import build_graph
 from job_search.nodes import Nodes, dedupe, excluded, job_key, merge_jobs
-from job_search.output import read_csv, report_sections, write_outputs
-from job_search.state import Consolidation, ExtractionResult, JobPosting, JobReview, QueryPlan, Reflection
+from job_search.output import read_csv, report_sections, sort_jobs, write_outputs
+from job_search.resume import load_resumes
+from job_search.state import (
+    Consolidation, ExtractionResult, JobPosting, JobReview, QueryPlan, Reflection, ResumeFit, ResumeRanking,
+)
 
 PROFILE = {
     "keywords": ["computational biologist"],
@@ -45,11 +48,13 @@ PAGES = {
 class FakeLLM:
     """Duck-types the parts of a chat model the nodes use: with_structured_output(...).invoke/batch."""
 
-    def __init__(self, gaps_first_round=("academic research institutes",), consolidation=None):
+    def __init__(self, gaps_first_round=("academic research institutes",), consolidation=None, resume_scores=None):
         self.gaps = list(gaps_first_round)
         self.reflect_calls = 0
         self.consolidation = consolidation or Consolidation()
         self.consolidate_prompt = None
+        self.resume_scores = resume_scores or {}  # job title -> score
+        self.rank_prompts = []
 
     def with_structured_output(self, schema):
         def respond(prompt: str):
@@ -64,6 +69,13 @@ class FakeLLM:
             if schema is ExtractionResult:
                 url = next(u for u in PAGES if f"Page URL: {u}" in prompt)
                 return ExtractionResult(jobs=[PAGES[url].model_copy(deep=True)])
+            if schema is ResumeRanking:
+                self.rank_prompts.append(prompt)
+                lines = [line.split(" | ") for line in prompt.splitlines() if line[:1].isdigit() and " | " in line]
+                return ResumeRanking(fits=[
+                    ResumeFit(id=int(i), score=self.resume_scores[title], reason=f"fit for {title}")
+                    for i, title, *_ in lines
+                ])
             raise AssertionError(schema)
 
         return RunnableLambda(respond)
@@ -204,3 +216,55 @@ def test_csv_round_trip_rebuilds_pdf(tmp_path):
 
     (pdf_path,) = write_outputs(loaded, PROFILE, str(tmp_path / "rebuilt"), include_csv=False)
     assert pdf_path.read_bytes().startswith(b"%PDF")
+
+
+RANKABLE = [
+    JobPosting(title="Senior Computational Biologist", company="Genentech", matches_criteria="yes",
+               relevance_score=9),
+    JobPosting(title="Bioinformatics Scientist", company="Illumina", matches_criteria="yes", relevance_score=7),
+    JobPosting(title="Cleared Analyst", company="DefenseBio", matches_criteria="no", relevance_score=8),
+]
+
+
+def test_rank_orders_by_resume_fit_over_keyword_relevance():
+    llm = FakeLLM(resume_scores={"Senior Computational Biologist": 4, "Bioinformatics Scientist": 9})
+    profile = {**PROFILE, "resume_text": "Bioinformatics PhD, NGS pipelines"}
+    out = Nodes(llm, fake_search).rank({"profile": profile, "jobs": RANKABLE})["jobs"]
+
+    assert [j.company for j in sort_jobs(out)] == ["Illumina", "Genentech", "DefenseBio"]
+    illumina = next(j for j in out if j.company == "Illumina")
+    assert (illumina.resume_fit, illumina.fit_reason) == (9, "fit for Bioinformatics Scientist")
+    assert next(j for j in out if j.company == "DefenseBio").resume_fit is None  # non-matches aren't scored
+    assert len(llm.rank_prompts) == 1 and "NGS pipelines" in llm.rank_prompts[0]
+    assert "DefenseBio" not in llm.rank_prompts[0]
+
+
+def test_rank_without_resume_keeps_keyword_order():
+    llm = FakeLLM()
+    assert Nodes(llm, fake_search).rank({"profile": PROFILE, "jobs": RANKABLE}) == {}
+    assert not llm.rank_prompts
+    assert [j.company for j in sort_jobs(RANKABLE)] == ["Genentech", "Illumina", "DefenseBio"]
+
+
+def test_rank_failure_leaves_jobs_unscored():
+    class Broken(FakeLLM):
+        def with_structured_output(self, schema):
+            return RunnableLambda(lambda _: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    out = Nodes(Broken(), fake_search).rank({"profile": {**PROFILE, "resume_text": "cv"}, "jobs": RANKABLE})["jobs"]
+    assert all(j.resume_fit is None for j in out)
+
+
+def test_resume_fit_survives_csv_round_trip(tmp_path):
+    jobs = [RANKABLE[0].model_copy(update={"resume_fit": 8, "fit_reason": "strong genomics overlap"})]
+    csv_path, pdf_path = write_outputs(jobs, PROFILE, str(tmp_path))
+    (loaded,) = read_csv(csv_path)
+    assert (loaded.resume_fit, loaded.fit_reason) == (8, "strong genomics overlap")
+    assert pdf_path.read_bytes().startswith(b"%PDF")
+
+
+def test_load_resumes_reads_text_files_and_tolerates_missing_folder(tmp_path):
+    (tmp_path / "cv.md").write_text("Jane Doe\n\n  Bioinformatics   scientist")
+    (tmp_path / "photo.jpg").write_bytes(b"not a resume")
+    assert load_resumes(str(tmp_path)) == ("=== cv.md ===\nJane Doe Bioinformatics scientist", 1)
+    assert load_resumes(str(tmp_path / "missing")) == ("", 0)

@@ -9,7 +9,7 @@ from fpdf.enums import XPos, YPos
 from .state import JobPosting
 
 CSV_FIELDS = [
-    "relevance_score", "matches_criteria", "title", "company", "location", "work_arrangement", "employment_type",
+    "resume_fit", "fit_reason", "relevance_score", "matches_criteria", "title", "company", "location", "work_arrangement", "employment_type",
     "seniority", "salary", "posted_date", "application_deadline", "posting_status", "url", "requirements",
     "description", "source_urls", "status", "notes",
 ]
@@ -22,7 +22,9 @@ def is_closed(j: JobPosting) -> bool:
 
 
 def sort_jobs(jobs: list[JobPosting]) -> list[JobPosting]:
-    return sorted(jobs, key=lambda j: (_MATCH_ORDER[j.matches_criteria], is_closed(j), -j.relevance_score, j.title))
+    return sorted(jobs, key=lambda j: (
+        _MATCH_ORDER[j.matches_criteria], is_closed(j), -(j.resume_fit or 0), -j.relevance_score, j.title,
+    ))
 
 
 def read_csv(path: Path) -> list[JobPosting]:
@@ -146,7 +148,8 @@ def _pdf_entry(pdf: _ReportPDF, j: JobPosting) -> None:
         ("Posted", j.posted_date),
         ("Apply by", j.application_deadline),
         ("Requirements", j.requirements),
-        ("Fit", f"{j.relevance_score}/10"),
+        ("Resume fit", j.resume_fit and f"{j.resume_fit}/10" + (f" — {j.fit_reason}" if j.fit_reason else "")),
+        ("Keyword fit" if j.resume_fit else "Fit", f"{j.relevance_score}/10"),
     ]
     pdf.ln(0.8)
     margin = pdf.l_margin

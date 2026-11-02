@@ -21,6 +21,8 @@ Paste both into `.env`.
 
 Edit `config.yaml` with your keywords, employment types, work arrangements, seniority, focus areas and any terms to exclude.
 
+Put your resume (PDF, TXT or Markdown) in `resume/`. Results are then ranked by how well each posting fits it, and the report shows the reason for each score. You can add more than one resume; they're scored together. The folder is git-ignored. Without a resume, results are ranked by keyword relevance.
+
 ## Run
 
 ```bash
@@ -38,7 +40,7 @@ uv run job-search --from-csv output/jobs_2026-11-01.csv
 
 ```
 plan_queries → search (parallel) → extract → dedupe → verify → reflect ─┬→ plan_queries (if gaps remain)
-                                                                         └→ consolidate → write_report
+                                                                         └→ consolidate → rank → write_report
 ```
 
 - **plan_queries**: Gemini writes search queries from your criteria, mixing job boards, applicant tracking systems (Greenhouse, Lever, Ashby) and company career pages. Later rounds target gaps that `reflect` found.
@@ -48,6 +50,7 @@ plan_queries → search (parallel) → extract → dedupe → verify → reflect
 - **verify**: for the best matches that are missing a URL, salary or work arrangement, it runs a follow-up search and fills in the gaps.
 - **reflect**: asks what kinds of postings or sources are still missing and loops until `max_iterations`.
 - **consolidate**: merges duplicates that name matching missed and labels each posting open, closed or unknown.
+- **rank**: scores each posting 1–10 against your resume with a one-line reason (`resume_fit`, `fit_reason` in the CSV). Each report section is sorted by this score.
 
 Always check that a posting is still open on the company's own careers page before applying.
 

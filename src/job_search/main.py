@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 from .graph import build_graph
 from .output import read_csv, write_outputs
+from .resume import load_resumes
 
 DEFAULTS = {
     "keywords": [],
@@ -19,6 +20,7 @@ DEFAULTS = {
     "focus_areas": [],
     "seniority": [],
     "exclude_keywords": [],
+    "resume_dir": "resume",
     "max_iterations": 2,
     "queries_per_round": 12,
     "results_per_query": 5,
@@ -78,6 +80,12 @@ def main(argv: list[str] | None = None) -> None:
         profile["max_iterations"] = args.max_iterations
     if args.queries:
         profile["queries_per_round"] = args.queries
+
+    profile["resume_text"], n_resumes = load_resumes(profile["resume_dir"]) if profile["resume_dir"] else ("", 0)
+    if n_resumes:
+        logging.info("Ranking against %d resume(s) in %s", n_resumes, profile["resume_dir"])
+    else:
+        logging.info("No resume found in %r; ranking by keyword relevance only", profile["resume_dir"])
 
     # Imported here so --help and config errors don't pay the import cost
     from langchain_google_genai import ChatGoogleGenerativeAI
