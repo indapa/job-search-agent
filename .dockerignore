@@ -1,0 +1,8 @@
+# Keep secrets, the resume and local output out of the image
+.env
+resume/
+output/
+.venv/
+.git/
+**/__pycache__/
+tests/

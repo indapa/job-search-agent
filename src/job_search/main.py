@@ -42,6 +42,48 @@ def tavily_search(client):
     return search
 
 
+API_KEYS = ("GOOGLE_API_KEY", "TAVILY_API_KEY")
+
+
+class MissingKeys(RuntimeError):
+    pass
+
+
+def load_profile(config_path: str | Path, overrides: dict | None = None) -> dict:
+    """config.yaml on top of DEFAULTS, then any overrides (e.g. CLI flags or a Lambda event)."""
+    with open(config_path) as f:
+        return {**DEFAULTS, **(yaml.safe_load(f) or {}), **(overrides or {})}
+
+
+def run(profile: dict, output_dir: str) -> dict:
+    """Search, rank and write the CSV and PDF; returns the final graph state."""
+    missing = [k for k in API_KEYS if not os.getenv(k)]
+    if missing:
+        raise MissingKeys(f"Missing {', '.join(missing)}")
+
+    profile = dict(profile)
+    profile["resume_text"], n_resumes = load_resumes(profile["resume_dir"]) if profile["resume_dir"] else ("", 0)
+    if n_resumes:
+        logging.info("Ranking against %d resume(s) in %s", n_resumes, profile["resume_dir"])
+    else:
+        logging.info("No resume found in %r; ranking by keyword relevance only", profile["resume_dir"])
+
+    # Imported here so --help and config errors don't pay the import cost
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from tavily import TavilyClient
+
+    # The client has no timeout by default, so one stalled request can hang the whole run
+    llm = ChatGoogleGenerativeAI(model=profile["model"], temperature=0, timeout=120, max_retries=3)
+    search = tavily_search(TavilyClient(api_key=os.environ["TAVILY_API_KEY"]))
+    graph = build_graph(llm, search, output_dir)
+    return graph.invoke({"profile": profile, "iteration": 0}, {"recursion_limit": 100})
+
+
+def quiet_noisy_loggers() -> None:
+    for noisy in ("httpx", "httpcore", "google_genai", "fontTools"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Find job postings that match your criteria.")
     parser.add_argument("--config", default="config.yaml")
@@ -57,11 +99,14 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
-    for noisy in ("httpx", "httpcore", "google_genai", "fontTools"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    quiet_noisy_loggers()
 
-    with open(args.config) as f:
-        profile = {**DEFAULTS, **yaml.safe_load(f)}
+    overrides = {}
+    if args.max_iterations:
+        overrides["max_iterations"] = args.max_iterations
+    if args.queries:
+        overrides["queries_per_round"] = args.queries
+    profile = load_profile(args.config, overrides)
 
     if args.from_csv:
         csv_path = Path(args.from_csv)
@@ -72,31 +117,10 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     load_dotenv()
-    missing = [k for k in ("GOOGLE_API_KEY", "TAVILY_API_KEY") if not os.getenv(k)]
-    if missing:
-        sys.exit(f"Missing {', '.join(missing)}. Copy .env.example to .env and fill it in.")
-
-    if args.max_iterations:
-        profile["max_iterations"] = args.max_iterations
-    if args.queries:
-        profile["queries_per_round"] = args.queries
-
-    profile["resume_text"], n_resumes = load_resumes(profile["resume_dir"]) if profile["resume_dir"] else ("", 0)
-    if n_resumes:
-        logging.info("Ranking against %d resume(s) in %s", n_resumes, profile["resume_dir"])
-    else:
-        logging.info("No resume found in %r; ranking by keyword relevance only", profile["resume_dir"])
-
-    # Imported here so --help and config errors don't pay the import cost
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    from tavily import TavilyClient
-
-    # The client has no timeout by default, so one stalled request can hang the whole run
-    llm = ChatGoogleGenerativeAI(model=profile["model"], temperature=0, timeout=120, max_retries=3)
-    search = tavily_search(TavilyClient(api_key=os.environ["TAVILY_API_KEY"]))
-    graph = build_graph(llm, search, args.output_dir)
-
-    result = graph.invoke({"profile": profile, "iteration": 0}, {"recursion_limit": 100})
+    try:
+        result = run(profile, args.output_dir)
+    except MissingKeys as e:
+        sys.exit(f"{e}. Copy .env.example to .env and fill it in.")
     print(f"\nFound {len(result.get('jobs', []))} jobs.")
     for path in result.get("output_files", []):
         print(f"  {path}")

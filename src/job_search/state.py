@@ -34,6 +34,8 @@ class JobPosting(JobDetails):
     """JobDetails plus fields the agent sets after extraction."""
 
     posting_status: PostingStatus = "unknown"
+    resume_fit: Optional[int] = Field(default=None, ge=1, le=10, description="1-10 fit for the person's resume")
+    fit_reason: Optional[str] = None
 
 
 class ExtractionResult(BaseModel):
@@ -60,6 +62,16 @@ class Consolidation(BaseModel):
         description="Each group lists the ids of records describing the same posting; omit jobs with no duplicate",
     )
     reviews: list[JobReview] = Field(default_factory=list, description="One entry per job id")
+
+
+class ResumeFit(BaseModel):
+    id: int
+    score: int = Field(ge=1, le=10, description="10 = the resume strongly fits the role; 1 = little overlap")
+    reason: str = Field(description="The concrete overlap or gap, in one short sentence")
+
+
+class ResumeRanking(BaseModel):
+    fits: list[ResumeFit] = Field(default_factory=list, description="One entry per job id")
 
 
 class QueryPlan(BaseModel):
