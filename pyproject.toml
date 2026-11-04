@@ -16,7 +16,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = [
+    "moto[s3,sns,ssm]>=5.2",
+    "pytest>=8",
+]
+lambda = [
+    "awslambdaric>=4.2",
+    "boto3>=1.40",
+]
 
 [project.scripts]
 job-search = "job_search.main:main"
